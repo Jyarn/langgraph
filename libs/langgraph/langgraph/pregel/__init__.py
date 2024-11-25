@@ -120,6 +120,8 @@ from langgraph.utils.config import (
 from langgraph.utils.pydantic import create_model
 from langgraph.utils.queue import AsyncQueue, SyncQueue  # type: ignore[attr-defined]
 
+from pydantic import ValidationError
+
 WriteValue = Union[Callable[[Input], Output], Any]
 
 
@@ -1919,29 +1921,45 @@ class Pregel(PregelProtocol):
             The output of the graph run. If stream_mode is "values", it returns the latest output.
             If stream_mode is not "values", it returns a list of output chunks.
         """
-        output_keys = output_keys if output_keys is not None else self.output_channels
-        if stream_mode == "values":
-            latest: Union[dict[str, Any], Any] = None
-        else:
-            chunks = []
-        for chunk in self.stream(
-            input,
-            config,
-            stream_mode=stream_mode,
-            output_keys=output_keys,
-            interrupt_before=interrupt_before,
-            interrupt_after=interrupt_after,
-            debug=debug,
-            **kwargs,
-        ):
+        try:
+            output_keys = output_keys if output_keys is not None else self.output_channels
             if stream_mode == "values":
-                latest = chunk
+                latest: Union[dict[str, Any], Any] = None
             else:
-                chunks.append(chunk)
-        if stream_mode == "values":
-            return latest
-        else:
-            return chunks
+                chunks = []
+            for chunk in self.stream(
+                input,
+                config,
+                stream_mode=stream_mode,
+                output_keys=output_keys,
+                interrupt_before=interrupt_before,
+                interrupt_after=interrupt_after,
+                debug=debug,
+                **kwargs,
+            ):
+                if stream_mode == "values":
+                    latest = chunk
+                else:
+                    chunks.append(chunk)
+            if stream_mode == "values":
+                return latest
+            else:
+                return chunks
+        except ValidationError as ve:
+            # Access the OverallStateModel
+            state_model = self.builder.state_model
+
+            #Go through each node and check if the value of state within the node matches the overallState
+            #In this case, we need to go through ok_node/bad_node to see if the values of 'a' are all strings (type of OverallState)
+            for node_name, node in self.nodes.items():
+                node_output = node.bound.invoke(input)
+                # This loops around all fields of the OverallState (in this case only a)
+                for field_name, field_type in state_model.__annotations__.items():
+                    if field_name in node_output:
+                        #An error statement is printed if the field_types don't match
+                        if not isinstance(node_output[field_name], field_type):
+                            print(f"{node_name}: Type mismatch for '{field_name}'. Expected {field_type}, got {type(node_output[field_name])}")
+            
 
     async def ainvoke(
         self,
