@@ -1946,19 +1946,18 @@ class Pregel(PregelProtocol):
             else:
                 return chunks
         except ValidationError as ve:
-            # Access the OverallStateModel
-            state_model = self.builder.state_model
-
-            #Go through each node and check if the value of state within the node matches the overallState
-            #In this case, we need to go through ok_node/bad_node to see if the values of 'a' are all strings (type of OverallState)
-            for node_name, node in self.nodes.items():
-                node_output = node.bound.invoke(input)
-                # This loops around all fields of the OverallState (in this case only a)
-                for field_name, field_type in state_model.__annotations__.items():
+            state_graph = self.builder
+            state_model = state_graph.schema
+            overall_state = state_model.__annotations__
+            for node_name, node in state_graph.nodes.items():
+                node_output = node.runnable.invoke(input)
+                for field_name, field_type in overall_state.items():
                     if field_name in node_output:
-                        #An error statement is printed if the field_types don't match
                         if not isinstance(node_output[field_name], field_type):
-                            print(f"{node_name}: Type mismatch for '{field_name}'. Expected {field_type}, got {type(node_output[field_name])}")
+                            print(f"{ve}")
+                            print("\n")
+                            print(f"Error found in node: {node_name}.")
+                            print(f"Field '{field_name}' has expected type {field_type.__name__}, but is of type {type(node_output[field_name]).__name__}\n")
             
 
     async def ainvoke(
