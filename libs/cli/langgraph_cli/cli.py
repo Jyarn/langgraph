@@ -1,3 +1,4 @@
+import os
 import pathlib
 import shutil
 import sys
@@ -510,19 +511,6 @@ def dockerfile(save_path: str, config: pathlib.Path, add_docker_compose: bool) -
     )
 
 
-@click.argument("path", required=False)
-@click.option(
-    "--template",
-    type=str,
-    help=TEMPLATE_HELP_STRING,
-)
-@cli.command("new", help="🌱 Create a new LangGraph project from a template.")
-@log_command
-def new(path: Optional[str], template: Optional[str]) -> None:
-    """Create a new LangGraph project from a template."""
-    return create_new(path, template)
-
-
 @click.option(
     "--host",
     default="127.0.0.1",
@@ -562,6 +550,12 @@ def new(path: Optional[str], template: Optional[str]) -> None:
     type=int,
     help="Enable remote debugging by listening on specified port. Requires debugpy to be installed",
 )
+@click.option(
+    "--wait-for-client",
+    is_flag=True,
+    help="Wait for a debugger client to connect to the debug port before starting the server",
+    default=False,
+)
 @cli.command(
     "dev",
     help="🏃‍♀️‍➡️ Run LangGraph API server in development mode with hot reloading and debugging support",
@@ -575,6 +569,7 @@ def dev(
     n_jobs_per_worker: Optional[int],
     no_browser: bool,
     debug_port: Optional[int],
+    wait_for_client: bool,
 ):
     """CLI entrypoint for running the LangGraph API server."""
     try:
@@ -598,8 +593,16 @@ def dev(
         ) from None
 
     config_json = langgraph_cli.config.validate_config_file(config)
+    cwd = os.getcwd()
+    sys.path.append(cwd)
+    dependencies = config_json.get("dependencies", [])
+    for dep in dependencies:
+        dep_path = pathlib.Path(cwd) / dep
+        if dep_path.is_dir() and dep_path.exists():
+            sys.path.append(str(dep_path))
 
     graphs = config_json.get("graphs", {})
+
     run_server(
         host,
         port,
@@ -608,8 +611,23 @@ def dev(
         n_jobs_per_worker=n_jobs_per_worker,
         open_browser=not no_browser,
         debug_port=debug_port,
-        env=config_json.get("env", None),
+        env=config_json.get("env"),
+        store=config_json.get("store"),
+        wait_for_client=wait_for_client,
     )
+
+
+@click.argument("path", required=False)
+@click.option(
+    "--template",
+    type=str,
+    help=TEMPLATE_HELP_STRING,
+)
+@cli.command("new", help="🌱 Create a new LangGraph project from a template.")
+@log_command
+def new(path: Optional[str], template: Optional[str]) -> None:
+    """Create a new LangGraph project from a template."""
+    return create_new(path, template)
 
 
 def prepare_args_and_stdin(

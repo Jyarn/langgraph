@@ -1,6 +1,7 @@
 import threading
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional, Sequence, Union
+from typing import Any, Optional
 
 from langchain_core.runnables import RunnableConfig
 from psycopg import Capabilities, Connection, Cursor, Pipeline
@@ -17,21 +18,11 @@ from langgraph.checkpoint.base import (
     CheckpointTuple,
     get_checkpoint_id,
 )
+from langgraph.checkpoint.postgres import _internal
 from langgraph.checkpoint.postgres.base import BasePostgresSaver
 from langgraph.checkpoint.serde.base import SerializerProtocol
 
-Conn = Union[Connection[DictRow], ConnectionPool[Connection[DictRow]]]
-
-
-@contextmanager
-def _get_connection(conn: Conn) -> Iterator[Connection[DictRow]]:
-    if isinstance(conn, Connection):
-        yield conn
-    elif isinstance(conn, ConnectionPool):
-        with conn.connection() as conn:
-            yield conn
-    else:
-        raise TypeError(f"Invalid connection type: {type(conn)}")
+Conn = _internal.Conn  # For backward compatibility
 
 
 class PostgresSaver(BasePostgresSaver):
@@ -39,7 +30,7 @@ class PostgresSaver(BasePostgresSaver):
 
     def __init__(
         self,
-        conn: Conn,
+        conn: _internal.Conn,
         pipe: Optional[Pipeline] = None,
         serde: Optional[SerializerProtocol] = None,
     ) -> None:
@@ -73,9 +64,9 @@ class PostgresSaver(BasePostgresSaver):
         ) as conn:
             if pipeline:
                 with conn.pipeline() as pipe:
-                    yield PostgresSaver(conn, pipe)
+                    yield cls(conn, pipe)
             else:
-                yield PostgresSaver(conn)
+                yield cls(conn)
 
     def setup(self) -> None:
         """Set up the checkpoint database asynchronously.
@@ -373,7 +364,7 @@ class PostgresSaver(BasePostgresSaver):
                 Will be applied regardless of whether the PostgresSaver instance was initialized with a pipeline.
                 If pipeline mode is not supported, will fall back to using transaction context manager.
         """
-        with _get_connection(self.conn) as conn:
+        with _internal.get_connection(self.conn) as conn:
             if self.pipe:
                 # a connection in pipeline mode can be used concurrently
                 # in multiple threads/coroutines, but only one cursor can be
@@ -388,19 +379,23 @@ class PostgresSaver(BasePostgresSaver):
                 # a connection not in pipeline mode can only be used by one
                 # thread/coroutine at a time, so we acquire a lock
                 if self.supports_pipeline:
-                    with self.lock, conn.pipeline(), conn.cursor(
-                        binary=True, row_factory=dict_row
-                    ) as cur:
+                    with (
+                        self.lock,
+                        conn.pipeline(),
+                        conn.cursor(binary=True, row_factory=dict_row) as cur,
+                    ):
                         yield cur
                 else:
                     # Use connection's transaction context manager when pipeline mode not supported
-                    with self.lock, conn.transaction(), conn.cursor(
-                        binary=True, row_factory=dict_row
-                    ) as cur:
+                    with (
+                        self.lock,
+                        conn.transaction(),
+                        conn.cursor(binary=True, row_factory=dict_row) as cur,
+                    ):
                         yield cur
             else:
                 with self.lock, conn.cursor(binary=True, row_factory=dict_row) as cur:
                     yield cur
 
 
-__all__ = ["PostgresSaver", "Conn"]
+__all__ = ["PostgresSaver", "BasePostgresSaver", "Conn"]

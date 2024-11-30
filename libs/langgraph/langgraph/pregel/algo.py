@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict, deque
 from functools import partial
 from hashlib import sha1
@@ -66,6 +67,7 @@ from langgraph.types import All, LoopProtocol, PregelExecutableTask, PregelTask
 from langgraph.utils.config import merge_configs, patch_config
 
 GetNextVersion = Callable[[Optional[V], BaseChannel], V]
+SUPPORTS_EXC_NOTES = sys.version_info >= (3, 11)
 
 
 class WritesProtocol(Protocol):
@@ -602,6 +604,7 @@ def prepare_single_task(
                     None,
                     task_id,
                     task_path,
+                    writers=proc.flat_writers,
                 )
 
         else:
@@ -633,6 +636,12 @@ def prepare_single_task(
                 )
             except StopIteration:
                 return
+            except Exception as exc:
+                if SUPPORTS_EXC_NOTES:
+                    exc.add_note(
+                        f"Before task with name '{name}' and path '{task_path[:3]}'"
+                    )
+                raise
 
             # create task id
             checkpoint_ns = f"{parent_ns}{NS_SEP}{name}" if parent_ns else name
@@ -720,6 +729,7 @@ def prepare_single_task(
                         None,
                         task_id,
                         task_path,
+                        writers=proc.flat_writers,
                     )
             else:
                 return PregelTask(task_id, name, task_path)
